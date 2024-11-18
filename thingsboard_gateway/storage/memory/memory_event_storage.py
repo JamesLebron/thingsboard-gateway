@@ -14,7 +14,9 @@
 
 from logging import getLogger
 from queue import Empty, Full, Queue
+from typing import Union
 
+from thingsboard_gateway.gateway.entities.event_pack import EventPack
 from thingsboard_gateway.storage.event_storage import EventStorage
 
 
@@ -24,7 +26,7 @@ class MemoryEventStorage(EventStorage):
         self.__queue_len = config.get("max_records_count", 10000)
         self.__events_per_time = config.get("read_records_count", 1000)
         self.__events_queue = Queue(self.__queue_len)
-        self.__event_pack = []
+        self.__event_pack: Union[EventPack, None] = None
         self.__stopped = False
         self.__log.debug("Memory storage created with following configuration: \nMax size: %i\n Read records per time: %i",
                   self.__queue_len, self.__events_per_time)
@@ -41,17 +43,18 @@ class MemoryEventStorage(EventStorage):
             self.__log.error("Storage is stopped!")
         return success
 
-    def get_event_pack(self):
+    def get_event_pack(self) -> Union[EventPack, None]:
         try:
-            if not self.__event_pack:
-                self.__event_pack = [self.__events_queue.get_nowait() for _ in
-                                     range(min(self.__events_per_time, self.__events_queue.qsize()))]
+            if self.__event_pack is None or not self.__event_pack:
+                self.__event_pack = EventPack()
+                for _ in range(min(self.__events_per_time, self.__events_queue.qsize())):
+                    self.__event_pack.append(self.__events_queue.get_nowait())
         except Empty:
             pass
         return self.__event_pack
 
     def event_pack_processing_done(self):
-        self.__event_pack = []
+        self.__event_pack = None
 
     def stop(self):
         self.__stopped = True

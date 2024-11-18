@@ -14,10 +14,12 @@
 
 import os
 import time
+from typing import Union
 
 from simplejson import dump
 from logging import getLogger
 
+from thingsboard_gateway.gateway.entities.event_pack import EventPack
 from thingsboard_gateway.storage.event_storage import EventStorage
 from thingsboard_gateway.storage.file.event_storage_files import EventStorageFiles
 from thingsboard_gateway.storage.file.event_storage_reader import EventStorageReader
@@ -52,7 +54,7 @@ class FileEventStorage(EventStorage):
             self.__log.error("Storage is closed!")
         return success
 
-    def get_event_pack(self):
+    def get_event_pack(self) -> Union[EventPack, None]:
         return self.__reader.read()
 
     def event_pack_processing_done(self):

@@ -11,6 +11,7 @@
 #     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
+from typing import Union
 
 from pybase64 import b64decode
 from io import BufferedReader, FileIO
@@ -19,6 +20,7 @@ from os.path import exists
 
 from simplejson import JSONDecodeError, dumps, load
 
+from thingsboard_gateway.gateway.entities.event_pack import EventPack
 from thingsboard_gateway.storage.file.event_storage_files import EventStorageFiles
 from thingsboard_gateway.storage.file.event_storage_reader_pointer import EventStorageReaderPointer
 from thingsboard_gateway.storage.file.file_event_storage_settings import FileEventStorageSettings
@@ -29,7 +31,7 @@ class EventStorageReader:
         self.__log = log
         self.files = files
         self.settings = settings
-        self.current_batch = None
+        self.current_batch: Union[EventPack, None] = None
         self.buffered_reader = None
         self.current_pos: EventStorageReaderPointer = self.read_state_file()
         self.new_pos = self.current_pos
@@ -40,11 +42,11 @@ class EventStorageReader:
             for file in files_to_delete:
                 self.delete_read_file(EventStorageReaderPointer(file, 0))
 
-    def read(self):
+    def read(self) -> Union[EventPack, None]:
         if self.current_batch is not None and self.current_batch:
             self.__log.debug("The previous batch was not discarded!")
             return self.current_batch
-        self.current_batch = []
+        self.current_batch = EventPack()
         records_to_read = self.settings.get_max_read_records_count()
         while records_to_read > 0:
             try:
@@ -54,7 +56,7 @@ class EventStorageReader:
                     line = self.buffered_reader.readline()
                     while line != b'':
                         try:
-                            self.current_batch.append(b64decode(line).decode("utf-8"))
+                            self.current_batch.append(line)
                             records_to_read -= 1
                         except IOError as e:
                             self.__log.warning("Could not parse line [%s] to uplink message! %s", line, e)

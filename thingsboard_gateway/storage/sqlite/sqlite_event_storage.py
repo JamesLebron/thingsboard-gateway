@@ -14,6 +14,8 @@
 
 from time import time
 
+from thingsboard_gateway.gateway.entities.converted_data import ConvertedData
+from thingsboard_gateway.gateway.entities.event_pack import EventPack
 from thingsboard_gateway.storage.event_storage import EventStorage
 from thingsboard_gateway.storage.sqlite.database import Database
 from queue import Queue
@@ -42,21 +44,30 @@ class SQLiteEventStorage(EventStorage):
         self.delete_time_point = None
         self.last_read = time()
         self.stopped = False
+        self.__event_data_pack = None
 
     def get_event_pack(self):
-        if not self.stopped:
-            data_from_storage = self.read_data()
-            try:                
-                event_pack_timestamps, event_pack_messages = zip(*([(item[0],item[1]) for item in data_from_storage]))
-            except ValueError as e:
-                return []
-            self.delete_time_point = max(event_pack_timestamps)            
-            return event_pack_messages
-        else:
-            return []
+        if self.stopped:
+            return EventPack()
+
+        if self.__event_data_pack is None:
+            self.__event_data_pack = EventPack()
+            try:
+                data_from_storage = self.read_data()
+
+                timestamps = []
+                for timestamp, data in data_from_storage:
+                    timestamps.append(timestamp)
+                    self.__event_data_pack.append(ConvertedData.deserialize(data))
+
+                self.delete_time_point = max(timestamps) if timestamps else None
+            except Exception:
+                self.__event_data_pack = None
+        return self.__event_data_pack
 
     def event_pack_processing_done(self):
         if not self.stopped:
+            self.__event_data_pack = None
             self.delete_data(self.delete_time_point)
 
     def read_data(self):

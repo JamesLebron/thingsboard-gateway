@@ -29,7 +29,7 @@ from string import ascii_lowercase, hexdigits
 from sys import argv, executable
 from threading import RLock, Thread, main_thread, current_thread
 from time import sleep, time, monotonic
-from typing import Union, List
+from typing import Union, List, Any, Dict
 import importlib.util
 from simplejson import JSONDecodeError, dumps, load, loads
 from yaml import safe_load
@@ -44,6 +44,8 @@ from thingsboard_gateway.gateway.constants import CONNECTED_DEVICES_FILENAME, CO
 from thingsboard_gateway.gateway.device_filter import DeviceFilter
 from thingsboard_gateway.gateway.entities.converted_data import ConvertedData
 from thingsboard_gateway.gateway.entities.datapoint_key import DatapointKey
+from thingsboard_gateway.gateway.entities.devices_data_pack import DevicesDataPack
+from thingsboard_gateway.gateway.entities.event_pack import EventPack
 from thingsboard_gateway.gateway.entities.report_strategy_config import ReportStrategyConfig
 from thingsboard_gateway.gateway.report_strategy.report_strategy_service import ReportStrategyService
 from thingsboard_gateway.gateway.shell.proxy import AutoProxy
@@ -418,15 +420,18 @@ class TBGatewayService:
 
     def init_statistics_service(self, config):
         self.__statistics = config # noqa
+        if self.__statistics_service is not None and isinstance(self.__statistics_service, StatisticsService):
+            self.__statistics_service.stop()
         if self.__statistics['enable']:
-            if isinstance(self.__statistics_service, StatisticsService):
-                self.__statistics_service.stop()
-            self.__statistics_service = StatisticsService(self.__statistics['statsSendPeriodInSeconds'], self, log,
-                                                          config_path=self._config_dir + self.__statistics[
-                                                              'configuration'] if self.__statistics.get(
-                                                              'configuration') else None,
+            statistics_config_file_path = None
+            if self.__statistics.get('configuration'):
+                statistics_config_file_path = self._config_dir + self.__statistics['configuration']
+            self.__statistics_service = StatisticsService(self.__statistics['statsSendPeriodInSeconds'],
+                                                          self,
+                                                          log,
+                                                          config_path=statistics_config_file_path,
                                                           custom_stats_send_period_in_seconds=self.__statistics.get(
-                                                              'customStatsSendPeriodInSeconds', 3600))
+                                                              'customStatsSendPeriodInSeconds', 60))
         else:
             self.__statistics_service = None # noqa
 
@@ -1093,12 +1098,6 @@ class TBGatewayService:
                 log.warning('Device %s forbidden', data['deviceName'])
                 return Status.FORBIDDEN_DEVICE
 
-            # Duplicate detector is deprecated!
-            # if isinstance(data, dict):
-            #     #TODO: implement data filtering for ConvertedData type
-            #     filtered_data = self.__duplicate_detector.filter_data(connector_name, data)
-            # else:
-            #     filtered_data = data
             if isinstance(data, ConvertedData):
                 if data.metadata and self.__latency_debug_mode:
                     data.add_to_metadata({SEND_TO_STORAGE_TS_PARAMETER: int(time() * 1000),
@@ -1132,6 +1131,7 @@ class TBGatewayService:
                         if self.__latency_debug_mode and event.metadata.get(DATA_RETRIEVING_STARTED):
                             log.debug("Data retrieving and conversion took %r ms", current_time - event.metadata.get(DATA_RETRIEVING_STARTED))
                     else:
+                        log.warning("Old formatted data is deprecated, please, use new formatted data! Processing old formatted data will be removed in future releases!")
                         self.__send_to_storage_old_formatted_data(connector_name, connector_id, data_array)
 
                 else:
@@ -1343,7 +1343,7 @@ class TBGatewayService:
         return current_data_pack_size
 
     def __read_data_from_storage(self):
-        devices_data_in_event_pack = {}
+        devices_data_pack = None
         global log
         log.debug("Send data Thread has been started successfully.")
         log.debug("Maximal size of the client message queue is: %r",
@@ -1356,7 +1356,7 @@ class TBGatewayService:
                 if monotonic() - logger_get_time > 60:
                     log = logging.getLogger('service')
                 if self.tb_client.is_connected():
-                    events = []
+                    events = EventPack()
 
                     if self.__remote_configurator is None or not self.__remote_configurator.in_process:
                         events = self._event_storage.get_event_pack()
@@ -1372,51 +1372,51 @@ class TBGatewayService:
                         if self.__latency_debug_mode and events_len > 100:
                             log.debug("Retrieved %r events from the storage.", events_len)
                         start_pack_processing = time()
-                        for event in events:
-                            try:
-                                current_event = loads(event)
-                            except Exception as e:
-                                log.error("Error while processing event from the storage, it will be skipped.",
-                                          exc_info=e)
-                                log.exception(e)
+                        devices_data_pack = DevicesDataPack()
+                        for current_event in events:
+
+                            if not isinstance(current_event, ConvertedData):
+                                log.critical("Data formatted in dictionary is deprecated! Please, use new formatted data!")
                                 continue
 
-                            if not devices_data_in_event_pack.get(current_event["deviceName"]): # noqa
-                                devices_data_in_event_pack[current_event["deviceName"]] = {"telemetry": [],
-                                                                                           "attributes": {}}
-                            # start_processing_telemetry_in_event = time()
-                            has_metadata = False
-                            if current_event.get('metadata'):
-                                has_metadata = True
-                            if current_event.get("telemetry"):
-                                if isinstance(current_event["telemetry"], list):
-                                    for item in current_event["telemetry"]:
-                                        if has_metadata and item.get('ts'):
-                                            item.update({'metadata': current_event.get('metadata')})
-                                        current_event_pack_data_size = self.check_size(devices_data_in_event_pack, current_event_pack_data_size, TBUtility.get_data_size(item))
-                                        devices_data_in_event_pack[current_event["deviceName"]]["telemetry"].append(item) # noqa
-                                        telemetry_dp_count += len(item.get('values', []))
-                                else:
-                                    if has_metadata and current_event["telemetry"].get('ts'):
-                                        current_event["telemetry"].update({'metadata': current_event.get('metadata')})
-                                    current_event_pack_data_size = self.check_size(devices_data_in_event_pack, current_event_pack_data_size, TBUtility.get_data_size(current_event["telemetry"]))
-                                    devices_data_in_event_pack[current_event["deviceName"]]["telemetry"].append(current_event["telemetry"]) # noqa
-                                    telemetry_dp_count += len(current_event["telemetry"].get('values', []))
-                            # log.debug("Processing telemetry in event took %r seconds.", time() - start_processing_telemetry_in_event) # noqa
-                            # start_processing_attributes_in_event = time()
-                            if current_event.get("attributes"):
-                                if isinstance(current_event["attributes"], list):
-                                    for item in current_event["attributes"]:
-                                        current_event_pack_data_size = self.check_size(devices_data_in_event_pack, current_event_pack_data_size, TBUtility.get_data_size(item))
-                                        devices_data_in_event_pack[current_event["deviceName"]]["attributes"].update(item.items()) # noqa
-                                        attribute_dp_count += 1
-                                else:
-                                    current_event_pack_data_size = self.check_size(devices_data_in_event_pack, current_event_pack_data_size, TBUtility.get_data_size(current_event["attributes"]))
-                                    devices_data_in_event_pack[current_event["deviceName"]]["attributes"].update(current_event["attributes"].items()) # noqa
-                                    attribute_dp_count += 1
+                            devices_data_pack.append(current_event)
 
-                            # log.debug("Processing attributes in event took %r seconds.", time() - start_processing_attributes_in_event) # noqa
-                        if devices_data_in_event_pack:
+                            # if not devices_data_in_event_pack.get(current_event["deviceName"]): # noqa
+                            #     devices_data_in_event_pack[current_event["deviceName"]] = {"telemetry": [],
+                            #                                                                "attributes": {}}
+                            # # start_processing_telemetry_in_event = time()
+                            # has_metadata = False
+                            # if current_event.get('metadata'):
+                            #     has_metadata = True
+                            # if current_event.get("telemetry"):
+                            #     if isinstance(current_event["telemetry"], list):
+                            #         for item in current_event["telemetry"]:
+                            #             if has_metadata and item.get('ts'):
+                            #                 item.update({'metadata': current_event.get('metadata')})
+                            #             current_event_pack_data_size = self.check_size(devices_data_in_event_pack, current_event_pack_data_size, TBUtility.get_data_size(item))
+                            #             devices_data_in_event_pack[current_event["deviceName"]]["telemetry"].append(item) # noqa
+                            #             telemetry_dp_count += len(item.get('values', []))
+                            #     else:
+                            #         if has_metadata and current_event["telemetry"].get('ts'):
+                            #             current_event["telemetry"].update({'metadata': current_event.get('metadata')})
+                            #         current_event_pack_data_size = self.check_size(devices_data_in_event_pack, current_event_pack_data_size, TBUtility.get_data_size(current_event["telemetry"]))
+                            #         devices_data_in_event_pack[current_event["deviceName"]]["telemetry"].append(current_event["telemetry"]) # noqa
+                            #         telemetry_dp_count += len(current_event["telemetry"].get('values', []))
+                            # # log.debug("Processing telemetry in event took %r seconds.", time() - start_processing_telemetry_in_event) # noqa
+                            # # start_processing_attributes_in_event = time()
+                            # if current_event.get("attributes"):
+                            #     if isinstance(current_event["attributes"], list):
+                            #         for item in current_event["attributes"]:
+                            #             current_event_pack_data_size = self.check_size(devices_data_in_event_pack, current_event_pack_data_size, TBUtility.get_data_size(item))
+                            #             devices_data_in_event_pack[current_event["deviceName"]]["attributes"].update(item.items()) # noqa
+                            #             attribute_dp_count += 1
+                            #     else:
+                            #         current_event_pack_data_size = self.check_size(devices_data_in_event_pack, current_event_pack_data_size, TBUtility.get_data_size(current_event["attributes"]))
+                            #         devices_data_in_event_pack[current_event["deviceName"]]["attributes"].update(current_event["attributes"].items()) # noqa
+                            #         attribute_dp_count += 1
+                            #
+                            # # log.debug("Processing attributes in event took %r seconds.", time() - start_processing_attributes_in_event) # noqa
+                        if devices_data_pack:
                             if not self.tb_client.is_connected():
                                 continue
                             while self.__rpc_reply_sent:
@@ -1433,8 +1433,7 @@ class TBGatewayService:
                                           pack_processing_time,
                                           average_event_processing_time_str) # noqa
 
-                            self.__send_data(devices_data_in_event_pack) # noqa
-                            current_event_pack_data_size = 0
+                            self.__send_data(devices_data_pack) # noqa
 
                         if self.tb_client.is_connected() and (
                                 self.__remote_configurator is None or not self.__remote_configurator.in_process):
@@ -1443,8 +1442,7 @@ class TBGatewayService:
 
                             if success and self.tb_client.is_connected():
                                 self._event_storage.event_pack_processing_done()
-                                del devices_data_in_event_pack
-                                devices_data_in_event_pack = {}
+                                devices_data_pack = None
                                 StatisticsService.add_count('platformTsProduced', count=telemetry_dp_count)
                                 StatisticsService.add_count('platformAttrProduced', count=attribute_dp_count)
                                 StatisticsService.add_count('platformMsgPushed', count=len(events))
@@ -1503,31 +1501,47 @@ class TBGatewayService:
             return False
 
     @CollectAllSentTBBytesStatistics(start_stat_type='allBytesSentToTB')
-    def __send_data(self, devices_data_in_event_pack):
+    def __send_data(self, devices_data_pack: DevicesDataPack):
         try:
-            for device in devices_data_in_event_pack:
-                final_device_name = device if self.__renamed_devices.get(device) is None else self.__renamed_devices[
-                    device]
+            attributes_data = devices_data_pack.get_attributes_data()
+            devices_attributes_data, gateway_attributes_data = self.__extract_device_and_gateway_data(attributes_data)
 
-                if devices_data_in_event_pack[device].get("attributes"):
-                    if device == self.name or device == "currentThingsBoardGateway":
-                        self._published_events.put(
-                            self.send_attributes(devices_data_in_event_pack[device]["attributes"]))
-                    else:
-                        self._published_events.put(self.gw_send_attributes(final_device_name,
-                                                                           devices_data_in_event_pack[
-                                                                               device]["attributes"]))
-                if devices_data_in_event_pack[device].get("telemetry"):
-                    if device == self.name or device == "currentThingsBoardGateway":
-                        self._published_events.put(
-                            self.send_telemetry(devices_data_in_event_pack[device]["telemetry"]))
-                    else:
-                        self._published_events.put(self.gw_send_telemetry(final_device_name,
-                                                                          devices_data_in_event_pack[
-                                                                              device]["telemetry"]))
-                devices_data_in_event_pack[device] = {"telemetry": [], "attributes": {}}
+            telemetry_data = devices_data_pack.get_telemetry_data()
+            devices_telemetry_data, gateway_telemetry_data = self.__extract_device_and_gateway_data(telemetry_data)
+
+            if gateway_attributes_data:
+                self._published_events.put(self.send_attributes(gateway_attributes_data))
+
+            if gateway_telemetry_data:
+                self._published_events.put(self.send_telemetry(gateway_telemetry_data))
+
+            if devices_attributes_data:
+                self._published_events.put(self.gw_send_devices_attributes(devices_attributes_data))
+
+            if devices_telemetry_data:
+                self._published_events.put(self.gw_send_devices_telemetry(devices_telemetry_data))
+
         except Exception as e:
             log.exception(e)
+
+    def __extract_device_and_gateway_data(self, devices_data_dict: Dict[str, Any]):
+        devices_data = {}
+        gateway_data = {}
+        for device_name in devices_data_dict:
+            target_dict = gateway_data if device_name == self.name or device_name == "currentThingsBoardGateway" else devices_data
+            final_device_name = device_name
+            if self.__renamed_devices.get(device_name) is not None:
+                final_device_name = self.__renamed_devices[device_name]
+            if target_dict.get(final_device_name) is None:
+                target_dict[final_device_name] = devices_data_dict[device_name]
+            else:
+                if isinstance(devices_data_dict[device_name], dict):
+                    target_dict[final_device_name].update(devices_data_dict[device_name])
+                elif isinstance(devices_data_dict[device_name], list):
+                    target_dict[final_device_name].extend(devices_data_dict[device_name])
+                else:
+                    log.error("Unknown type of data for device %s", device_name)
+        return devices_data, gateway_data
 
     @CountMessage('msgsReceivedFromPlatform')
     def _rpc_request_handler(self, request_id, content):
@@ -1984,6 +1998,10 @@ class TBGatewayService:
         return self.tb_client.client.gw_send_telemetry(device, telemetry, quality_of_service=quality_of_service)
 
     @CountMessage('msgsSentToPlatform')
+    def gw_send_devices_telemetry(self, telemetry, quality_of_service=1):
+        return self.tb_client.client.gw_send_devices_telemetry(telemetry, quality_of_service=quality_of_service)
+
+    @CountMessage('msgsSentToPlatform')
     def send_attributes(self, attributes, quality_of_service=None, wait_for_publish=True):
         return self.tb_client.client.send_attributes(attributes, quality_of_service=quality_of_service,
                                                      wait_for_publish=wait_for_publish)
@@ -1991,6 +2009,10 @@ class TBGatewayService:
     @CountMessage('msgsSentToPlatform')
     def gw_send_attributes(self, device, attributes, quality_of_service=1):
         return self.tb_client.client.gw_send_attributes(device, attributes, quality_of_service=quality_of_service)
+
+    @CountMessage('msgsSentToPlatform')
+    def gw_send_devices_attributes(self, attributes, quality_of_service=1):
+        return self.tb_client.client.gw_send_devices_attributes(attributes, quality_of_service=quality_of_service)
 
     # GETTERS --------------------
     def ping(self):

@@ -13,6 +13,9 @@
 #     limitations under the License.
 
 from abc import ABC, abstractmethod
+from typing import List, Union
+
+from thingsboard_gateway.gateway.entities.event_pack import EventPack
 
 
 class EventStorage(ABC):
@@ -26,8 +29,8 @@ class EventStorage(ABC):
         pass
 
     @abstractmethod
-    def get_event_pack(self):
-        # Returns max "10" events from pack
+    def get_event_pack(self) -> Union[EventPack, None]:
+        # Returns events from pack
         pass
 
     @abstractmethod

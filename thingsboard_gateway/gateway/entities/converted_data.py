@@ -12,10 +12,12 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
+from orjson import loads
 from typing import List, Union
 
 from thingsboard_gateway.gateway.constants import ATTRIBUTES_PARAMETER, TELEMETRY_PARAMETER, TIMESERIES_PARAMETER, \
-    METADATA_PARAMETER
+    METADATA_PARAMETER, DEVICE_NAME_PARAMETER, DEVICE_TYPE_PARAMETER, TELEMETRY_TIMESTAMP_PARAMETER, \
+    TELEMETRY_VALUES_PARAMETER
 from thingsboard_gateway.gateway.entities.attributes import Attributes
 from thingsboard_gateway.gateway.entities.datapoint_key import DatapointKey
 from thingsboard_gateway.gateway.entities.telemetry_entry import TelemetryEntry
@@ -222,3 +224,25 @@ class ConvertedData:
             converted_objects.append(current_data)
 
         return converted_objects
+
+    @classmethod
+    def deserialize(cls, data_object:Union[bytes, str, dict]):
+        if not isinstance(data_object, dict):
+            data = loads(data_object)
+        else:
+            data = data_object
+        device_name = data[DEVICE_NAME_PARAMETER]
+        device_type = data[DEVICE_TYPE_PARAMETER]
+        metadata = data.get(METADATA_PARAMETER, {})
+
+        instance = cls(device_name, device_type, metadata)
+        if data.get(ATTRIBUTES_PARAMETER):
+            instance.attributes = Attributes({DatapointKey(key): value for key, value in data.get(ATTRIBUTES_PARAMETER).items()})
+
+        for telemetry_data in data.get(TELEMETRY_PARAMETER, []):
+            ts = telemetry_data.get(TELEMETRY_TIMESTAMP_PARAMETER)
+            values = telemetry_data.get(TELEMETRY_VALUES_PARAMETER)
+            telemetry_entry = TelemetryEntry(values, ts)
+            instance.add_to_telemetry(telemetry_entry)
+
+        return instance
