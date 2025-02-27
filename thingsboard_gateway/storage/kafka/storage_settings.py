@@ -24,6 +24,23 @@ class StorageSettings:
         self.__topic = config.get('topic', 'gateway.uplink')
         self.__partitions = config.get('partitions', 3)
         self.__replication_factor = config.get('replication_factor', 1)
+        self.__replica_assignments = config.get('replica_assignments', None)
+        topic_configs = config.get('topic_configs', None)
+        self.__topic_configs = {}
+        if topic_configs is not None:
+            if isinstance(topic_configs, dict):
+                self.__topic_configs = config['topic_configs']
+            elif isinstance(topic_configs, str):
+                config_entries = topic_configs.split(';')
+                for config_entry in config_entries:
+                    key, value = config_entry.split(':')
+                    self.__topic_configs[key] = value
+            elif isinstance(topic_configs, list):
+                for item in topic_configs:
+                    if isinstance(item, dict):
+                        self.__topic_configs.update(item)
+        if not self.__topic_configs:
+            self.__topic_configs = None
 
     @property
     def bootstrap_servers(self):
@@ -40,3 +57,11 @@ class StorageSettings:
     @property
     def replication_factor(self):
         return self.__replication_factor
+
+    @property
+    def replica_assignments(self):
+        return self.__replica_assignments
+
+    @property
+    def topic_configs(self):
+        return self.__topic_configs

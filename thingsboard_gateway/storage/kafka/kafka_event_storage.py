@@ -109,7 +109,9 @@ class KafkaEventStorage(EventStorage):
                 topic_config = NewTopic(
                     name=self.__settings.topic,
                     num_partitions=self.__settings.partitions,
-                    replication_factor=self.__settings.replication_factor
+                    replication_factor=self.__settings.replication_factor,
+                    replica_assignments=self.__settings.replica_assignments,
+                    topic_configs=self.__settings.topic_configs
                 )
                 await admin_client.create_topics([topic_config])
                 self.__log.info("Topic created.")
