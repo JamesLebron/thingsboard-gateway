@@ -17,7 +17,10 @@
 
 class StorageSettings:
     def __init__(self, config):
-        self.__bootstrap_servers = config.get('bootstrap_servers', ["localhost:9092"])
+        if isinstance(config.get('bootstrap_servers'), dict):
+            self.__bootstrap_servers = config.get('bootstrap_servers').values()
+        else:
+            self.__bootstrap_servers = config.get('bootstrap_servers', ["localhost:9092"])
         self.__topic = config.get('topic', 'gateway.uplink')
         self.__partitions = config.get('partitions', 3)
         self.__replication_factor = config.get('replication_factor', 1)

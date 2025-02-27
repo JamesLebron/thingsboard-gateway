@@ -16,6 +16,7 @@
 # ------------------------------------------------------------------------------
 
 from threading import Thread, Event
+from concurrent.futures._base import TimeoutError
 from logging import getLogger
 from orjson import dumps
 
@@ -64,7 +65,7 @@ class KafkaEventStorage(EventStorage):
 
     def put(self, event):
         if not self.__producer:
-            self.__log.error("Kafka producer is not initialized. Cannot send message.")
+            self.__log.error("Kafka producer is not initialized. Cannot send message. Retrying...")
             return False
 
         future = asyncio.run_coroutine_threadsafe(
@@ -73,10 +74,10 @@ class KafkaEventStorage(EventStorage):
         try:
             future.result(timeout=1)
             return True
-        except ProducerClosed:
+        except (ProducerClosed, TimeoutError):
             pass
         except Exception as e:
-            self.__log.error("Failed to send event to Kafka: %r", e, exc_info=e)
+            self.__log.error("Failed to send event to Kafka: %r. Retrying...", e, exc_info=e)
         return False
 
     def stop(self):
