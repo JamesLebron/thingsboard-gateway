@@ -52,6 +52,7 @@ from thingsboard_gateway.gateway.statistics.decorators import CountMessage, Coll
 from thingsboard_gateway.gateway.statistics.statistics_service import StatisticsService
 from thingsboard_gateway.gateway.tb_client import TBClient
 from thingsboard_gateway.storage.file.file_event_storage import FileEventStorage
+from thingsboard_gateway.storage.kafka.kafka_event_storage import KafkaEventStorage
 from thingsboard_gateway.storage.memory.memory_event_storage import MemoryEventStorage
 from thingsboard_gateway.storage.sqlite.sqlite_event_storage import SQLiteEventStorage
 from thingsboard_gateway.tb_utility.tb_gateway_remote_configurator import RemoteConfigurator
@@ -373,6 +374,7 @@ class TBGatewayService:
             "memory": MemoryEventStorage,
             "file": FileEventStorage,
             "sqlite": SQLiteEventStorage,
+            "kafka": KafkaEventStorage
         }
         self.__gateway_rpc_methods = {
             "ping": self.__rpc_ping,
@@ -1350,14 +1352,20 @@ class TBGatewayService:
         if isinstance(data, ConvertedData):
             if self.__latency_debug_mode:
                 data.add_to_metadata({"putToStorageTs": int(time() * 1000)})
-            json_data = dumps(data.to_dict(self.__latency_debug_mode), separators=(',', ':'), skipkeys=True)
+            if not isinstance(self._event_storage, KafkaEventStorage):
+                json_data = dumps(data.to_dict(self.__latency_debug_mode), separators=(',', ':'), skipkeys=True)
+            else:
+                json_data = data.to_dict(self.__latency_debug_mode)
         else:
-            json_data = dumps(data, separators=(',', ':'), skipkeys=True)
+            if not isinstance(self._event_storage, KafkaEventStorage):
+                json_data = dumps(data, separators=(',', ':'), skipkeys=True)
+            else:
+                json_data = data.to_dict(self.__latency_debug_mode)
         save_result = self._event_storage.put(json_data)
         tries = 4
         current_try = 0
         while not save_result and current_try < tries:
-            sleep(0.1)
+            sleep(0.5)
             save_result = self._event_storage.put(json_data)
             current_try += 1
         if not save_result:
