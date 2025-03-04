@@ -18,13 +18,15 @@
 class StorageSettings:
     def __init__(self, config):
         if isinstance(config.get('bootstrap_servers'), dict):
-            self.__bootstrap_servers = config.get('bootstrap_servers').values()
+            self.__bootstrap_servers = list(config.get('bootstrap_servers').values())
         else:
             self.__bootstrap_servers = config.get('bootstrap_servers', ["localhost:9092"])
         self.__topic = config.get('topic', 'gateway.uplink')
         self.__partitions = config.get('partitions', 3)
         self.__replication_factor = config.get('replication_factor', 1)
         self.__replica_assignments = config.get('replica_assignments', None)
+        self.__linger_ms = config.get('linger_ms', 5)
+        self.__max_batch_size = config.get('max_batch_size', 16384)
         topic_configs = config.get('topic_configs', None)
         self.__topic_configs = {}
         if topic_configs is not None:
@@ -65,3 +67,11 @@ class StorageSettings:
     @property
     def topic_configs(self):
         return self.__topic_configs
+
+    @property
+    def linger_ms(self):
+        return self.__linger_ms
+
+    @property
+    def max_batch_size(self):
+        return self.__max_batch_size
