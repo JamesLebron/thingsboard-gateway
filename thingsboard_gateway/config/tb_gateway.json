@@ -14,7 +14,7 @@
       "enable": false,
       "filterFile": "list.json"
     },
-    "maxPayloadSizeBytes": 8196,
+    "maxPayloadSizeBytes": 32768,
     "minPackSendDelayMS": 50,
     "minPackSizeToSend": 500,
     "checkConnectorsConfigurationInSeconds": 60,
@@ -45,11 +45,17 @@
     "max_records_count": 100000,
     "data_folder_path": "./data/",
     "max_file_count": 10,
-    "max_read_records_count": 10,
+    "max_read_records_count": 1000,
     "max_records_per_file": 10000,
     "data_file_path": "./data/data.db",
     "messages_ttl_check_in_hours": 1,
-    "messages_ttl_in_days": 7
+    "messages_ttl_in_days": 7,
+    "bootstrap_servers": ["YOUR_BOOTSTRAP_SERVER_ADDRESS:9092"],
+    "topic": "gateway.uplink",
+    "consumer_enabled": false,
+    "partitions": 3,
+    "replication_factor": 1,
+    "topic_configs": "retention.ms:604800000;segment.bytes:52428800;retention.bytes:1048576000;partitions:1;min.insync.replicas:1"
   },
   "grpc": {
     "enabled": false,
